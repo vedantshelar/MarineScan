@@ -1,0 +1,28 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Environment
+.env
+.env.*
+
+# Mac
+.DS_Store
+
+# Dataset
+ml/data/
+
+# Training outputs
+ml/runs/
+
+# Original YOLO pretrained model
+ml/yolov8s.pt
+
+# Visualization image
+ml/annotated_ghost_net.png

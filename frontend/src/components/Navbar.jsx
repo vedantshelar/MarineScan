@@ -48,7 +48,7 @@ import {
   
             <div className="user-info">
   
-              <strong>Vedant</strong>
+              <strong>Admin</strong>
   
               <span>Administrator</span>
   

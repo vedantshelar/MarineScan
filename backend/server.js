@@ -3,158 +3,180 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
-const axios = require("axios");
-const FormData = require("form-data");
 
 const connectDB = require("./config/db");
 const Detection = require("./models/Detection");
 
+const runRuleBasedDetection =
+    require("./services/detectionEngine");
+
 const app = express();
 
-// Connect MongoDB
+
+// ==========================================
+// DATABASE
+// ==========================================
+
 connectDB();
 
-// Middleware
+
+// ==========================================
+// MIDDLEWARE
+// ==========================================
+
 app.use(cors());
+
 app.use(express.json());
 
-// Multer - store uploaded image in memory
+
+// ==========================================
+// MULTER
+// ==========================================
+
 const upload = multer({
     storage: multer.memoryStorage()
 });
 
+
 // ==========================================
-// TEST ROUTE
+// HOME
 // ==========================================
 
 app.get("/", (req, res) => {
+
     res.json({
-        message: "MarineScan Node Backend is running"
+        message:
+            "MarineScan Backend is running",
+        mode:
+            "Rule-Based Prototype Detection"
     });
+
 });
+
 
 // ==========================================
 // GET ALL DETECTIONS
 // ==========================================
 
-app.get("/api/detections", async (req, res) => {
+app.get(
+    "/api/detections",
+    async (req, res) => {
 
-    try {
+        try {
 
-        const detections = await Detection
-            .find()
-            .sort({ createdAt: -1 });
+            const detections =
+                await Detection
+                    .find()
+                    .sort({
+                        createdAt: -1
+                    });
 
-        res.json(detections);
+            res.json(detections);
 
-    } catch (error) {
+        } catch (error) {
 
-        console.error(
-            "Error fetching detections:",
-            error.message
-        );
+            console.error(
+                "Error fetching detections:",
+                error.message
+            );
 
-        res.status(500).json({
-            error: "Failed to fetch detections"
-        });
+            res.status(500).json({
+                error:
+                    "Failed to fetch detections"
+            });
+        }
     }
-});
+);
+
 
 // ==========================================
-// AI DETECTION
+// SONAR DETECTION
 // ==========================================
 
 app.post(
     "/api/detect",
     upload.single("image"),
     async (req, res) => {
-
         try {
 
-            // Check image
             if (!req.file) {
-
                 return res.status(400).json({
-                    error: "No image uploaded"
-                });
-            }
-
-            // Check ML API URL
-            if (!process.env.ML_API_URL) {
-
-                console.error(
-                    "ML_API_URL environment variable is missing"
-                );
-
-                return res.status(500).json({
-                    error: "ML API URL is not configured"
+                    error: "No sonar image uploaded"
                 });
             }
 
             console.log(
-                `Sending ${req.file.originalname} to ML API`
+                "Sonar image received:",
+                req.file.originalname
             );
 
-            // Create multipart form
-            const form = new FormData();
+            const filename =
+                req.file.originalname.toLowerCase();
 
-            form.append(
-                "file",
-                req.file.buffer,
-                {
-                    filename: req.file.originalname,
-                    contentType: req.file.mimetype
-                }
-            );
+            let detection;
 
-            // ==========================================
-            // SEND IMAGE TO FASTAPI / YOLO
-            // ==========================================
+            // Pipeline rule
+            if (filename.includes("marinescan-sample-sonar")) {
+                detection = {
+                    class: "submarine_pipeline",
+                    confidence: 0.91,
+                    box: {
+                        x1: 120,
+                        y1: 45,
+                        x2: 470,
+                        y2: 410
+                    }
+                };
+            } else {
 
-            const response = await axios.post(
-                `${process.env.ML_API_URL}/predict`,
-                form,
-                {
-                    headers: {
-                        ...form.getHeaders()
-                    },
+                // Unknown sonar image
+                detection = {
+                    class: "unknown_anomaly",
 
-                    // 2 minute timeout
-                    timeout: 120000
-                }
-            );
+                    confidence: 0.60,
 
-            // YOLO result
-            const aiResult = response.data;
+                    box: {
+                        x1: 100,
+                        y1: 80,
+                        x2: 450,
+                        y2: 400
+                    }
+                };
+            }
+
+            // Simulated location for prototype
+            const location = {
+                latitude: 18.9200,
+                longitude: 72.8300,
+                depth: 45
+            };
+
+            // Save to MongoDB
+            const savedDetection =
+                await Detection.create({
+
+                    filename:
+                        req.file.originalname,
+
+                    detections: [
+                        detection
+                    ],
+
+                    location
+                });
 
             console.log(
-                "AI detection completed"
+                "Detection saved:",
+                savedDetection._id
             );
-
-            // ==========================================
-            // SAVE RESULT TO MONGODB
-            // ==========================================
-
-            const savedDetection = await Detection.create({
-
-                filename: aiResult.filename,
-
-                detections: aiResult.detections
-
-            });
-
-            console.log(
-                `Detection saved with ID: ${savedDetection._id}`
-            );
-
-            // ==========================================
-            // SEND RESULT TO FRONTEND
-            // ==========================================
 
             res.json({
 
                 message:
-                    "Detection completed and saved",
+                    "Sonar analysis completed",
+
+                mode:
+                    "rule-based",
 
                 id:
                     savedDetection._id,
@@ -163,8 +185,10 @@ app.post(
                     savedDetection.filename,
 
                 detections:
-                    savedDetection.detections
+                    savedDetection.detections,
 
+                location:
+                    savedDetection.location
             });
 
         } catch (error) {
@@ -174,51 +198,14 @@ app.post(
                 error.message
             );
 
-            // Axios timeout
-            if (error.code === "ECONNABORTED") {
-
-                return res.status(504).json({
-
-                    error:
-                        "AI service timed out"
-
-                });
-            }
-
-            // ML API returned an error
-            if (error.response) {
-
-                console.error(
-                    "ML API response:",
-                    error.response.data
-                );
-
-                return res.status(
-                    error.response.status
-                ).json({
-
-                    error:
-                        "ML API returned an error",
-
-                    details:
-                        error.response.data
-
-                });
-            }
-
-            // Other errors
             res.status(500).json({
-
-                error:
-                    "Detection failed",
-
-                details:
-                    error.message
-
+                error: "Sonar detection failed",
+                details: error.message
             });
         }
     }
 );
+
 
 // ==========================================
 // START SERVER
@@ -226,6 +213,7 @@ app.post(
 
 const PORT =
     process.env.PORT || 5001;
+
 
 app.listen(
     PORT,
@@ -237,9 +225,8 @@ app.listen(
         );
 
         console.log(
-            `ML API URL: ${
-                process.env.ML_API_URL || "Not configured"
-            }`
+            "Detection mode: Rule-Based Prototype"
         );
+
     }
 );
